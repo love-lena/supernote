@@ -1,0 +1,54 @@
+name: supernote
+
+# Self-hosted Supernote private cloud + the Manta MCP server.
+#
+# One command on any host:
+#   docker compose up -d        (or: podman compose up -d)
+#
+# Config lives in a .env file beside this one — copy .env.example to .env and
+# fill it in (.env is gitignored; never commit real credentials).
+#
+# Notes for SELinux hosts (Fedora/RHEL):
+#   - The data bind mount carries :Z so the container can read/write it.
+#   - :Z is harmless on non-SELinux hosts (macOS/Docker Desktop ignore it).
+
+services:
+  supernote:
+    image: supernote:socketio-dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      # BIND_ADDR=0.0.0.0 publishes on all host interfaces (default). Set it to
+      # the host's tailscale IP in .env to expose the cloud to the tailnet ONLY.
+      - "${BIND_ADDR:-0.0.0.0}:8080:8080"
+    environment:
+      SUPERNOTE_STORAGE_DIR: /data
+      SUPERNOTE_CONFIG_DIR: /data/config
+      SUPERNOTE_HOST: 0.0.0.0
+      SUPERNOTE_PORT: 8080
+    volumes:
+      # The whole cloud state: SQLite DB, document/notebook blobs, and
+      # config/config.yaml (which holds secret_key). :Z relabels it for SELinux.
+      - ${SUPERNOTE_DATA_DIR:-./supernote-data}:/data:Z
+
+  manta-mcp:
+    image: supernote:manta-mcp
+    build:
+      context: .
+      dockerfile: Dockerfile.manta-mcp
+    restart: unless-stopped
+    depends_on:
+      - supernote
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:9000:9000"
+    environment:
+      # Reach the cloud by compose service name — no host.docker.internal, so
+      # this works identically on Linux, macOS, Docker, and Podman.
+      SUPERNOTE_CLOUD_URL: http://supernote:8080
+      MANTA_MCP_HOST: 0.0.0.0
+      MANTA_MCP_PORT: 9000
+      SUPERNOTE_EMAIL: ${SUPERNOTE_EMAIL:?set SUPERNOTE_EMAIL in .env}
+      SUPERNOTE_PASSWORD: ${SUPERNOTE_PASSWORD:?set SUPERNOTE_PASSWORD in .env}
+      MANTA_MCP_BEARER: ${MANTA_MCP_BEARER:-}
