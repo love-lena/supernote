@@ -1,0 +1,17 @@
+# Deployment pins for the networking stack. Upstream pyproject.toml uses >= floors,
+# which resolve a too-new Starlette (>=1.0.0) that REMOVED the @app.route decorator
+# used in supernote/server/mcp/auth.py:233 -> startup crash. These pin to the versions
+# the author actually tested against (requirements_dev.txt) and cap Starlette below the
+# 1.0.0 that drops the decorator. Re-audit / re-pin on any upgrade.
+mcp==1.26.0
+starlette<1.0.0
+aiohttp==3.13.3
+aiohttp-remotes==1.3.0
+
+# Socket.IO push channel (device auto-sync). The Supernote device ships an old
+# okhttp Socket.IO v2 client that only speaks Engine.IO protocol v3 (EIO=3).
+# python-engineio 4.x hard-rejects EIO=3 (async_server.py: `EIO != ['4']`), so
+# we MUST stay on the 4.x/3.x line, which is the canonical server for that
+# client. These are the last 4.x/3.x releases. Re-test on any bump.
+python-socketio==4.6.1
+python-engineio==3.14.2

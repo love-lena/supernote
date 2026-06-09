@@ -2,6 +2,7 @@ import asyncio
 import importlib.resources
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -26,6 +27,7 @@ from .events import LocalEventBus
 from .routes import (
     admin,
     auth,
+    debug,
     extended,
     file_device,
     file_web,
@@ -35,6 +37,7 @@ from .routes import (
     system,
 )
 from .routes.decorators import public_route
+from .socketio_app import create_socketio_server
 from .services.blob import LocalBlobStorage
 from .services.coordination import SqliteCoordinationService
 from .services.file import FileService
@@ -82,6 +85,11 @@ async def trace_middleware(
     request: web.Request,
     handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
 ) -> web.StreamResponse:
+    # Socket.IO connections are long-lived websockets; don't try to capture
+    # request/response bodies for them (the handler only returns on disconnect).
+    if request.path.startswith("/socket.io"):
+        return await handler(request)
+
     # Process Request
     try:
         response = await handler(request)
@@ -232,6 +240,9 @@ async def jwt_auth_middleware(
         or request.path.startswith("/authorize")
         or request.path.startswith("/token")
         or request.path.startswith("/.well-known/")
+        # Socket.IO authenticates via the token query param in its own connect
+        # handler (the device sends no x-access-token header on the socket).
+        or request.path.startswith("/socket.io")
     ):
         return await handler(request)
 
@@ -337,6 +348,20 @@ def create_app(config: ServerConfig) -> web.Application:
     app.add_routes(schedule.routes)
     app.add_routes(summary.routes)
     app.add_routes(extended.routes)
+
+    # Real-time push channel for device auto-sync. Mounted at /socket.io/ on the
+    # same app/port the device already polls; exempted from the auth middleware
+    # above so its connect handler can authenticate from the token query param.
+    sio = create_socketio_server(app)
+    sio.attach(app, socketio_path="socket.io")
+    app["sio"] = sio
+
+    # Debug-only push-protocol harness (eval). Off unless explicitly enabled.
+    if os.getenv("SUPERNOTE_DEBUG_EMIT"):
+        logger.warning(
+            "SUPERNOTE_DEBUG_EMIT enabled — POST /api/debug/emit is live (eval only)"
+        )
+        app.add_routes(debug.routes)
 
     # Serve static frontend files
     static_path = Path(str(importlib.resources.files("supernote.server") / "static"))

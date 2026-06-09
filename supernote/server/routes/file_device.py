@@ -129,6 +129,12 @@ async def handle_sync_end(request: web.Request) -> web.Response:
         if owner_eq == req_data.equipment_no:
             del sync_locks[user_email]
 
+    # The device is now idle — flush any resync that was deferred while it was
+    # mid-sync (avoids interrupting a sync, which would create _CONFLICT_ files).
+    notify_sync_end = request.app.get("sio_notify_sync_end")
+    if notify_sync_end is not None:
+        await notify_sync_end(user_email)
+
     return web.json_response(SynchronousEndLocalVO().to_dict())
 
 
@@ -345,6 +351,7 @@ async def handle_upload_finish(request: web.Request) -> web.Response:
             req_data.path,
             req_data.content_hash,
             inner_name=req_data.inner_name,
+            equipment_no=request.get("equipment_no"),
         )
     except SupernoteError as err:
         return err.to_response()

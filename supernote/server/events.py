@@ -30,6 +30,24 @@ class NoteDeletedEvent(Event):
     user_id: int
 
 
+@dataclass
+class FileChangedEvent(Event):
+    """Triggered when ANY user file changes (create/update/delete).
+
+    Distinct from NoteUpdatedEvent, which is .note-only and drives server-side
+    processing (OCR, summaries). This event exists to notify connected devices
+    that their content changed so they should run a sync pass — it fires for
+    every file type, including PDFs pushed to INBOX via the API.
+    """
+
+    user_id: int
+    file_path: str | None = None
+    change: str = "update"  # "update" | "delete"
+    # equipment_no of the device/client that made the change, if known. Used to
+    # avoid telling a device to resync a change it originated.
+    originator_equipment: str | None = None
+
+
 EventHandler = Callable[[Event], Awaitable[Any]]
 
 

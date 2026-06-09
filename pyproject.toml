@@ -46,6 +46,16 @@ server = [
   "mcp>=1.25.0",
   "aiohttp-asgi>=0.6.1",
   "starlette>=0.35.0,<1.0",
+  # 4.x (Engine.IO protocol v3) — the device ships an old okhttp Socket.IO v2
+  # client that only speaks EIO=3, which python-socketio 5.x / engineio 4.x
+  # reject. See constraints.txt.
+  "python-socketio>=4.6,<5",
+]
+manta-mcp = [
+  "supernote[client]",
+  "mashumaro>=3.17",
+  "fastmcp>=3,<4",
+  "pypdf>=4",
 ]
 all = ["supernote[client,server]"]
 
@@ -58,6 +68,7 @@ include = ["supernote*"]
 [project.entry-points."console_scripts"]
 supernote = "supernote.cli.main:main"
 supernote-server = "supernote.cli.server:main"
+manta-mcp = "supernote.manta_mcp.server:main"
 
 [tool.setuptools.package-data]
 "supernote" = ["alembic.ini"]

@@ -1,0 +1,21 @@
+FROM python:3.14-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    MANTA_MCP_HOST=0.0.0.0 \
+    MANTA_MCP_PORT=9000
+
+RUN groupadd -g 1000 -r manta && useradd -u 1000 -r -g manta manta
+
+WORKDIR /app
+COPY pyproject.toml README.md LICENSE ./
+COPY supernote/ supernote/
+
+# NOTE: no constraints.txt here. The cloud pins old socketio/starlette for the
+# EIO=3 device client; this sibling wants FastMCP 3.x's modern mcp/starlette.
+# Separate image == separate dependency env == no conflict.
+RUN pip install --no-cache-dir ".[manta-mcp]"
+
+USER manta
+EXPOSE 9000
+CMD ["manta-mcp"]

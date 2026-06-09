@@ -19,11 +19,13 @@ RUN apt-get update && \
 # Set working directory and copy project files
 WORKDIR /app
 
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml README.md LICENSE constraints.txt ./
 COPY supernote/ supernote/
 
-# Install the package with server dependencies
-RUN pip install --no-cache-dir ".[server]"
+# Install the package with server dependencies. Deps are constrained to the author's
+# tested versions (constraints.txt) because the upstream >= floors resolve a too-new
+# Starlette that removed the @app.route decorator used in mcp/auth.py (startup crash).
+RUN pip install --no-cache-dir -c constraints.txt ".[server]"
 
 # Create directories for storage and config, and set permissions
 RUN mkdir -p /data /data/config && \

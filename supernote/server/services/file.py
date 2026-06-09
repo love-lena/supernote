@@ -33,7 +33,12 @@ from supernote.server.utils.paths import (
 
 from ..db.models.file import RecycleFileDO, UserFileDO
 from ..db.session import DatabaseSessionManager
-from ..events import LocalEventBus, NoteDeletedEvent, NoteUpdatedEvent
+from ..events import (
+    FileChangedEvent,
+    LocalEventBus,
+    NoteDeletedEvent,
+    NoteUpdatedEvent,
+)
 from .blob import BlobStorage
 from .user import UserService
 from .vfs import VirtualFileSystem
@@ -339,8 +344,13 @@ class FileService:
         path_str: str,
         content_hash: str,
         inner_name: str,
+        equipment_no: str | None = None,
     ) -> FileEntity:
-        """Finish upload for a specific user."""
+        """Finish upload for a specific user.
+
+        ``equipment_no`` identifies the device/client that uploaded, so a device
+        is not told to resync a change it originated.
+        """
         user_id = await self.user_service.get_user_id(user)
 
         # Verify blob and get metadata
@@ -381,10 +391,20 @@ class FileService:
         full_path = f"{clean_path}/{filename}" if clean_path else filename
 
         # 5. Emit Event (Fire and Forget)
-        if self.event_bus and filename.endswith(".note"):
+        if self.event_bus:
+            if filename.endswith(".note"):
+                await self.event_bus.publish(
+                    NoteUpdatedEvent(
+                        file_id=new_file.id, user_id=user_id, file_path=full_path
+                    )
+                )
+            # Notify connected devices of the change regardless of file type so
+            # API-pushed PDFs (e.g. INBOX uploads) trigger an auto-sync.
             await self.event_bus.publish(
-                NoteUpdatedEvent(
-                    file_id=new_file.id, user_id=user_id, file_path=full_path
+                FileChangedEvent(
+                    user_id=user_id,
+                    file_path=full_path,
+                    originator_equipment=equipment_no,
                 )
             )
 
@@ -432,13 +452,16 @@ class FileService:
             )
 
         # 3. Emit Event (Fire and Forget)
-        if self.event_bus and file_name.endswith(".note"):
-            # We need the full path for the event
+        if self.event_bus:
             full_path = await self.get_full_path_by_node(user_id, new_file.id)
-            await self.event_bus.publish(
-                NoteUpdatedEvent(
-                    file_id=new_file.id, user_id=user_id, file_path=full_path
+            if file_name.endswith(".note"):
+                await self.event_bus.publish(
+                    NoteUpdatedEvent(
+                        file_id=new_file.id, user_id=user_id, file_path=full_path
+                    )
                 )
+            await self.event_bus.publish(
+                FileChangedEvent(user_id=user_id, file_path=full_path)
             )
 
     async def create_directory(self, user: str, path: str) -> FileEntity:
@@ -818,13 +841,20 @@ class FileService:
 
             if self.event_bus:
                 for node in nodes_to_delete:
-                    # Only emit for actual files, not folders, or if it was a note
-                    if node.is_folder == BooleanEnum.NO and node.file_name.endswith(
-                        ".note"
-                    ):
-                        # node.file_id is the original File ID
+                    if node.is_folder == BooleanEnum.NO:
+                        # Only .note deletions drive server-side processing cleanup,
+                        # but any file deletion should notify connected devices.
+                        if node.file_name.endswith(".note"):
+                            # node.file_id is the original File ID
+                            await self.event_bus.publish(
+                                NoteDeletedEvent(file_id=node.file_id, user_id=user_id)
+                            )
                         await self.event_bus.publish(
-                            NoteDeletedEvent(file_id=node.file_id, user_id=user_id)
+                            FileChangedEvent(
+                                user_id=user_id,
+                                file_path=node.file_name,
+                                change="delete",
+                            )
                         )
 
     async def revert_from_recycle(self, user: str, id_list: list[int]) -> None:
