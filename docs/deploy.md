@@ -68,6 +68,20 @@ future IP change never breaks anything.
 3. **MCP registration:** `claude mcp remove manta-cloud` then
    `claude mcp add --transport http manta-cloud http://<new-magicdns>:9000/mcp`.
 
+## Token lifetime
+
+The web/CLI JWT defaults to `auth.expiration_hours: 24` — fine for a multi-user
+server, but on a single-user tailnet-bound self-host it just means a re-login
+every day. Raise it in `config/config.yaml` (the value travels with the data dir):
+
+```yaml
+auth:
+  expiration_hours: 8760   # 1 year; device tokens already get 10 years
+```
+
+Restart the cloud to load it; existing tokens keep their original expiry, so
+re-login once afterward to mint a long-lived one.
+
 ## Production hygiene
 
 Don't set `SUPERNOTE_DEBUG_EMIT` on the new host — it enables `POST /api/debug/emit`
