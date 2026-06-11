@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import select
 
 from supernote.models.base import BooleanEnum
-from supernote.models.schedule import AddScheduleTaskDTO
+from supernote.models.schedule import AddScheduleTaskDTO, UpdateScheduleTaskDTO
 from supernote.server.db.models.schedule import ScheduleTaskDO, ScheduleTaskGroupDO
 from supernote.server.db.session import DatabaseSessionManager
 
@@ -59,12 +59,14 @@ class ScheduleService:
             return list(result.scalars().all())
 
     async def upsert_task(
-        self, user_id: int, dto: AddScheduleTaskDTO
+        self, user_id: int, dto: AddScheduleTaskDTO | UpdateScheduleTaskDTO
     ) -> ScheduleTaskDO:
         """Create or update a task by its device-provided ID.
 
         The device is the single writer per task ID, so a matching ID updates
-        the existing row (last-write-wins) and a new ID inserts.
+        the existing row (last-write-wins) and a new ID inserts. Accepts both
+        the create DTO (POST /task) and the batch-update DTO (PUT /task/list),
+        which share the same task fields. `isDeleted=Y` soft-deletes.
         """
         if dto.title is not None and len(dto.title) > MAX_TITLE_LENGTH:
             raise ValueError("Title is too long")

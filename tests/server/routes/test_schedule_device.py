@@ -130,3 +130,41 @@ async def test_device_create_task_is_idempotent_on_id(
     match = [t for t in tasks if t["taskId"] == DEVICE_TASK_BODY["taskId"]]
     assert len(match) == 1
     assert match[0]["title"] == "edited"
+
+
+async def test_task_list_batch_completes_and_deletes(
+    client: TestClient, auth_headers: dict[str, str], user_id: int
+) -> None:
+    """PUT /task/list applies a batch: status changes stay visible, isDeleted=Y
+    tombstones drop out of task/all. (The device routes edit/complete/delete
+    through this one endpoint.)"""
+    service: ScheduleService = client.app["schedule_service"]
+    await service.upsert_task(user_id, AddScheduleTaskDTO(task_id="a", title="A"))
+    await service.upsert_task(user_id, AddScheduleTaskDTO(task_id="b", title="B"))
+
+    body = {
+        "updateScheduleTaskList": [
+            {
+                "taskId": "a",
+                "title": "A",
+                "lastModified": 222,
+                "status": "completed",
+                "isDeleted": "N",
+            },
+            {"taskId": "b", "title": "B", "lastModified": 222, "isDeleted": "Y"},
+        ]
+    }
+    resp = await client.put(
+        "/api/file/schedule/task/list", json=body, headers=auth_headers
+    )
+    assert resp.status == 200, await resp.text()
+    assert (await resp.json())["success"] is True
+
+    r2 = await client.post(
+        "/api/file/schedule/task/all",
+        json={"maxResults": "200"},
+        headers=auth_headers,
+    )
+    by_id = {t["taskId"]: t for t in (await r2.json())["scheduleTask"]}
+    assert by_id["a"]["status"] == "completed"  # completed task stays visible
+    assert "b" not in by_id  # deleted task tombstoned out

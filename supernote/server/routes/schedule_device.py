@@ -17,7 +17,7 @@ import time
 
 from aiohttp import web
 
-from supernote.models.base import BooleanEnum, create_error_response
+from supernote.models.base import BaseResponse, BooleanEnum, create_error_response
 from supernote.models.schedule import (
     AddScheduleTaskDTO,
     AddScheduleTaskVO,
@@ -25,6 +25,7 @@ from supernote.models.schedule import (
     ScheduleTaskGroupItem,
     ScheduleTaskGroupVO,
     ScheduleTaskInfo,
+    UpdateScheduleTaskListDTO,
 )
 from supernote.server.db.models.schedule import ScheduleTaskDO
 from supernote.server.services.schedule import ScheduleService
@@ -133,3 +134,28 @@ async def create_task(request: web.Request) -> web.Response:
     return web.json_response(
         AddScheduleTaskVO(success=True, task_id=str(task.task_id)).to_dict()
     )
+
+
+@routes.put("/api/file/schedule/task/list")
+async def update_task_list(request: web.Request) -> web.Response:
+    # Request: UpdateScheduleTaskListDTO — the device batches edits, completions
+    #          (status='completed'), and deletions (isDeleted='Y') here.
+    # Response: BaseResponse
+    user = request["user"]
+    try:
+        dto = UpdateScheduleTaskListDTO.from_dict(await request.json())
+    except Exception as e:
+        return web.json_response(
+            create_error_response(f"Invalid request: {e}").to_dict(), status=400
+        )
+
+    schedule_service: ScheduleService = request.app["schedule_service"]
+    user_id = await request.app["user_service"].get_user_id(user)
+
+    try:
+        for item in dto.update_schedule_task_list:
+            await schedule_service.upsert_task(user_id, item)
+    except ValueError as e:
+        return web.json_response(create_error_response(str(e)).to_dict(), status=400)
+
+    return web.json_response(BaseResponse(success=True).to_dict())
