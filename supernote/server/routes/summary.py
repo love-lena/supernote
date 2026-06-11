@@ -127,10 +127,10 @@ async def handle_add_summary(request: web.Request) -> web.Response:
         return SupernoteError.uncaught(err).to_response()
 
 
-@routes.post("/api/file/update/summary")
+@routes.put("/api/file/update/summary")
 async def handle_update_summary(request: web.Request) -> web.Response:
-    # Endpoint: POST /api/file/update/summary
-    # Purpose: Update an existing summary.
+    # Endpoint: PUT /api/file/update/summary
+    # Purpose: Update an existing summary. The Manta syncs digest edits with PUT.
     # Response: BaseResponse
     req_data = UpdateSummaryDTO.from_dict(await request.json())
     user_email = request["user"]
@@ -145,10 +145,10 @@ async def handle_update_summary(request: web.Request) -> web.Response:
         return SupernoteError.uncaught(err).to_response()
 
 
-@routes.post("/api/file/delete/summary")
+@routes.delete("/api/file/delete/summary")
 async def handle_delete_summary(request: web.Request) -> web.Response:
-    # Endpoint: POST /api/file/delete/summary
-    # Purpose: Delete a summary.
+    # Endpoint: DELETE /api/file/delete/summary
+    # Purpose: Delete a summary. The Manta syncs digest deletions with DELETE.
     # Response: BaseResponse
     req_data = DeleteSummaryDTO.from_dict(await request.json())
     user_email = request["user"]

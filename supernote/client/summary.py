@@ -71,15 +71,15 @@ class SummaryClient:
         )
 
     async def update_summary(self, dto: UpdateSummaryDTO) -> BaseResponse:
-        """Update an existing summary."""
-        return await self._client.post_json(
+        """Update an existing summary. The Manta uses PUT for this."""
+        return await self._client.put_json(
             "/api/file/update/summary", BaseResponse, json=dto.to_dict()
         )
 
     async def delete_summary(self, summary_id: int) -> BaseResponse:
-        """Delete a summary."""
+        """Delete a summary. The Manta uses DELETE for this."""
         dto = DeleteSummaryDTO(id=summary_id)
-        return await self._client.post_json(
+        return await self._client.delete_json(
             "/api/file/delete/summary", BaseResponse, json=dto.to_dict()
         )
 

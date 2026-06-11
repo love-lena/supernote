@@ -165,6 +165,14 @@ class Client:
             raise ApiException(f"Error connecting to API: {err}") from err
         return await self._raise_for_status(resp)
 
+    async def delete(self, url: str, **kwargs: Any) -> aiohttp.ClientResponse:
+        """Make a delete request."""
+        try:
+            resp = await self.request("delete", url, **kwargs)
+        except ClientError as err:
+            raise ApiException(f"Error connecting to API: {err}") from err
+        return await self._raise_for_status(resp)
+
     async def get_content(self, url: str, **kwargs: Any) -> bytes:
         """Make a get request and return bytes."""
         resp = await self.get(url, **kwargs)
@@ -193,6 +201,23 @@ class Client:
     async def put_json(self, url: str, data_cls: Type[_T], **kwargs: Any) -> _T:
         """Make a put request and return a json response."""
         resp = await self.put(url, **kwargs)
+        try:
+            result = await resp.text()
+        except ClientError as err:
+            raise ApiException("Server returned malformed response") from err
+        try:
+            data_response = data_cls.from_json(result)
+        except (LookupError, ValueError) as err:
+            raise ApiException(
+                f"Server return malformed response type {data_cls.__name__}: {result}"
+            ) from err
+        if not data_response.success:
+            raise ApiException(data_response.error_msg)
+        return data_response
+
+    async def delete_json(self, url: str, data_cls: Type[_T], **kwargs: Any) -> _T:
+        """Make a delete request and return a json response."""
+        resp = await self.delete(url, **kwargs)
         try:
             result = await resp.text()
         except ClientError as err:
