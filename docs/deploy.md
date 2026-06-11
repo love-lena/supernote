@@ -34,15 +34,22 @@ docker stop supernote
 #    restoring = untar it and point SUPERNOTE_DATA_DIR at the result.
 tar -czf supernote-data-$(date +%F).tgz -C /path/to/old supernote-data
 
-# 4. Copy the data dir to the new host (any transport).
+# 4. If the new host is on a DIFFERENT tailnet, switch this machine to it now:
+#    `tailscale login` (adds the new account) or `tailscale switch <profile>`.
+#    This is the point of no return for old-tailnet connectivity — which is why
+#    it comes AFTER the device's final sync (step 1) and the backup (step 3),
+#    and BEFORE the copy, which needs the new network.
+
+# 5. Copy the data dir to the new host (any transport).
 rsync -av /path/to/old/supernote-data/  newhost:/srv/supernote-data/
 
-# 5. On the NEW host: point .env at it and start.
+# 6. On the NEW host: point .env at it and start.
 #    SUPERNOTE_DATA_DIR=/srv/supernote-data
 docker compose up -d --build
 
-# 6. On the DEVICE: update the private-cloud server URL to the new host
-#    (see "Repoint the clients" below), THEN re-enable Wi-Fi and sync.
+# 7. On the DEVICE: update the private-cloud server URL to the new host
+#    (see "Repoint the clients" below), make sure the device can reach the new
+#    network (rejoin Wi-Fi / new tailnet path), THEN re-enable Wi-Fi and sync.
 ```
 
 Keep the old host's container **stopped** (or remove it) once the new one is live —
