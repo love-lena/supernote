@@ -43,13 +43,14 @@ async def test_user_file_crud(db_session: AsyncSession) -> None:
 
 async def test_schedule_crud(db_session: AsyncSession) -> None:
     """Test Basic CRUD for ScheduleTaskDO."""
-    # Create Group
-    group = ScheduleTaskGroupDO(user_id=999, title="My Tasks")
+    # Create Group (device-generated string IDs)
+    group = ScheduleTaskGroupDO(task_list_id="grp-999", user_id=999, title="My Tasks")
     db_session.add(group)
     await db_session.commit()
 
     # Create Task
     task = ScheduleTaskDO(
+        task_id="task-999",
         user_id=999,
         task_list_id=group.task_list_id,
         title="Buy Milk",

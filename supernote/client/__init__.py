@@ -20,7 +20,6 @@ from . import (
     exceptions,
     extended,
     login_client,
-    schedule,
     summary,
     web,
 )
@@ -34,7 +33,6 @@ __all__ = [
     "auth",
     "web",
     "device",
-    "schedule",
     "summary",
     "exceptions",
     "extended",

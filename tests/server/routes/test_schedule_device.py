@@ -1,15 +1,34 @@
 """Device-protocol schedule (To-Do) endpoints at /api/file/schedule/*.
 
 The Manta's To-Do sync calls these flat POST endpoints (captured from device
-traffic + mirrored in models/schedule.py), NOT the invented /api/schedule/*
-REST API. These tests assert the device's first read calls return a valid
-envelope so it can proceed past them.
+traffic + mirrored in models/schedule.py). It generates its own string IDs and
+upserts tasks via POST /task.
 """
 
 import pytest
 from aiohttp.test_utils import TestClient
 
+from supernote.models.schedule import AddScheduleTaskDTO
+from supernote.server.db.models.schedule import ScheduleTaskGroupDO
 from supernote.server.services.schedule import ScheduleService
+
+# A real POST /api/file/schedule/task body captured from the device.
+DEVICE_TASK_BODY = {
+    "taskId": "33db3d7f80d31330c170f49d56c88182",
+    "title": "HEY CLAUDE!!!",
+    "status": "needsAction",
+    "isDeleted": "N",
+    "isReminderOn": "N",
+    "completedTime": 1781205746360,
+    "dueTime": 0,
+    "lastModified": 1781205746360,
+    "links": "eyJhcHBOYW1lIjoibm90ZSIsImZpbGVJZCI6IkYxIn0=",
+    "sort": 0,
+    "sortCompleted": 0,
+    "planerSort": 0,
+    "sortTime": 1781205746360,
+    "planerSortTime": 1781205746360,
+}
 
 
 @pytest.fixture
@@ -21,10 +40,13 @@ async def user_id(client: TestClient, auth_headers: dict[str, str]) -> int:
 async def test_group_all_returns_envelope_with_groups(
     client: TestClient, auth_headers: dict[str, str], user_id: int
 ) -> None:
-    """POST /api/file/schedule/group/all -> ScheduleTaskGroupVO with the
-    user's groups under `scheduleTaskGroup`."""
-    service: ScheduleService = client.app["schedule_service"]
-    group = await service.create_group(user_id, "Work")
+    """POST group/all -> ScheduleTaskGroupVO listing the user's groups."""
+    sm = client.app["session_manager"]
+    async with sm.session() as session:
+        session.add(
+            ScheduleTaskGroupDO(task_list_id="grp-1", user_id=user_id, title="Work")
+        )
+        await session.commit()
 
     resp = await client.post(
         "/api/file/schedule/group/all",
@@ -34,20 +56,19 @@ async def test_group_all_returns_envelope_with_groups(
     assert resp.status == 200, await resp.text()
     body = await resp.json()
     assert body["success"] is True
-    groups = body["scheduleTaskGroup"]
-    assert [(g["taskListId"], g["title"]) for g in groups] == [
-        (str(group.task_list_id), "Work")
+    assert [(g["taskListId"], g["title"]) for g in body["scheduleTaskGroup"]] == [
+        ("grp-1", "Work")
     ]
 
 
 async def test_task_all_returns_envelope_with_tasks(
     client: TestClient, auth_headers: dict[str, str], user_id: int
 ) -> None:
-    """POST /api/file/schedule/task/all -> ScheduleTaskAllVO with the user's
-    tasks under `scheduleTask` plus a nextSyncToken."""
+    """POST task/all -> ScheduleTaskAllVO with tasks + a nextSyncToken."""
     service: ScheduleService = client.app["schedule_service"]
-    group = await service.create_group(user_id, "Work")
-    task = await service.create_task(user_id, group.task_list_id, title="Ship it")
+    await service.upsert_task(
+        user_id, AddScheduleTaskDTO(task_id="t-1", title="Ship it")
+    )
 
     resp = await client.post(
         "/api/file/schedule/task/all",
@@ -58,7 +79,54 @@ async def test_task_all_returns_envelope_with_tasks(
     body = await resp.json()
     assert body["success"] is True
     assert body["nextSyncToken"] is not None
-    tasks = body["scheduleTask"]
-    assert [(t["taskId"], t["title"]) for t in tasks] == [
-        (str(task.task_id), "Ship it")
+    assert [(t["taskId"], t["title"]) for t in body["scheduleTask"]] == [
+        ("t-1", "Ship it")
     ]
+
+
+async def test_device_create_task_upserts_and_round_trips(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """POST /task accepts the device's string taskId + rich fields, persists
+    them, and returns them unchanged via task/all (the sync round-trip)."""
+    resp = await client.post(
+        "/api/file/schedule/task", json=DEVICE_TASK_BODY, headers=auth_headers
+    )
+    assert resp.status == 200, await resp.text()
+    body = await resp.json()
+    assert body["success"] is True
+    assert body["taskId"] == DEVICE_TASK_BODY["taskId"]
+
+    resp2 = await client.post(
+        "/api/file/schedule/task/all",
+        json={"maxResults": "200"},
+        headers=auth_headers,
+    )
+    tasks = (await resp2.json())["scheduleTask"]
+    match = [t for t in tasks if t["taskId"] == DEVICE_TASK_BODY["taskId"]]
+    assert len(match) == 1
+    t = match[0]
+    assert t["title"] == "HEY CLAUDE!!!"
+    assert t["links"] == DEVICE_TASK_BODY["links"]
+    assert t["status"] == "needsAction"
+
+
+async def test_device_create_task_is_idempotent_on_id(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """Re-posting the same taskId updates in place (no duplicate row)."""
+    await client.post(
+        "/api/file/schedule/task", json=DEVICE_TASK_BODY, headers=auth_headers
+    )
+    edited = {**DEVICE_TASK_BODY, "title": "edited"}
+    await client.post("/api/file/schedule/task", json=edited, headers=auth_headers)
+
+    resp = await client.post(
+        "/api/file/schedule/task/all",
+        json={"maxResults": "200"},
+        headers=auth_headers,
+    )
+    tasks = (await resp.json())["scheduleTask"]
+    match = [t for t in tasks if t["taskId"] == DEVICE_TASK_BODY["taskId"]]
+    assert len(match) == 1
+    assert match[0]["title"] == "edited"
