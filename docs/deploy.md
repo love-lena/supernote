@@ -23,16 +23,31 @@ docker compose up -d --build        # or: podman compose up -d --build
 Images rebuild from the repo, so only the ~300 MB data dir and your `.env` move.
 
 ```bash
-# 1. On the OLD host: stop the cloud so SQLite is quiesced (no mid-write copy).
+# 1. On the DEVICE: trigger one final manual sync and wait for it to finish,
+#    then take the device offline (Wi-Fi off / airplane mode). It stays offline
+#    until step 6 — anything it syncs to the old host after the copy is lost.
+
+# 2. On the OLD host: stop the cloud so SQLite is quiesced (no mid-write copy).
 docker stop supernote
 
-# 2. Copy the data dir to the new host (any transport).
+# 3. Back up the data dir. This archive IS a complete cloud backup —
+#    restoring = untar it and point SUPERNOTE_DATA_DIR at the result.
+tar -czf supernote-data-$(date +%F).tgz -C /path/to/old supernote-data
+
+# 4. Copy the data dir to the new host (any transport).
 rsync -av /path/to/old/supernote-data/  newhost:/srv/supernote-data/
 
-# 3. On the NEW host: point .env at it and start.
+# 5. On the NEW host: point .env at it and start.
 #    SUPERNOTE_DATA_DIR=/srv/supernote-data
 docker compose up -d --build
+
+# 6. On the DEVICE: update the private-cloud server URL to the new host
+#    (see "Repoint the clients" below), THEN re-enable Wi-Fi and sync.
 ```
+
+Keep the old host's container **stopped** (or remove it) once the new one is live —
+two clouds with diverged copies of the same data dir is how you manufacture
+conflicts. The tarball from step 3 is the rollback path, not the old container.
 
 `config.yaml` (with `secret_key`) travels inside the data dir, so existing device
 and CLI tokens stay valid — no forced re-auth beyond the URL change below.
@@ -62,7 +77,10 @@ future IP change never breaks anything.
 
 ## Repoint the clients off the old tailnet
 
-1. **Manta device:** set its private-cloud server URL to `http://<new-magicdns>:8080`.
+1. **Manta device:** while still offline, set its private-cloud server URL to
+   `http://<new-magicdns>:8080`, then re-enable Wi-Fi and trigger a sync. Verify
+   the round trip before trusting it: edit any note, sync, and confirm the file's
+   timestamp updates on the new cloud (`supernote cloud ls`).
 2. **CLI / manta skill:** `supernote cloud login <account> --url http://<new-magicdns>:8080`
    (rewrites the cached token + host).
 3. **MCP registration:** `claude mcp remove manta-cloud` then
