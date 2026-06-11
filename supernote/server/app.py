@@ -32,12 +32,11 @@ from .routes import (
     file_device,
     file_web,
     oss,
-    schedule,
+    schedule_device,
     summary,
     system,
 )
 from .routes.decorators import public_route
-from .socketio_app import create_socketio_server
 from .services.blob import LocalBlobStorage
 from .services.coordination import SqliteCoordinationService
 from .services.file import FileService
@@ -52,6 +51,7 @@ from .services.schedule import ScheduleService
 from .services.search import SearchService
 from .services.summary import SummaryService
 from .services.user import UserService
+from .socketio_app import create_socketio_server
 from .utils.hashing import get_md5_hash
 from .utils.rate_limit import RateLimiter
 from .utils.url_signer import UrlSigner
@@ -346,7 +346,7 @@ def create_app(config: ServerConfig) -> web.Application:
     app.add_routes(file_web.routes)
     app.add_routes(file_device.routes)
     app.add_routes(oss.routes)
-    app.add_routes(schedule.routes)
+    app.add_routes(schedule_device.routes)
     app.add_routes(summary.routes)
     app.add_routes(extended.routes)
 

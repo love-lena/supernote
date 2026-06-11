@@ -59,16 +59,25 @@ device family is `/api/file/schedule/...` with flat POST bodies. The DB layer
 (`ScheduleTaskDO` / `ScheduleTaskGroupDO` / `ScheduleService`) is reusable; only the HTTP
 surface (paths, DTO/VO shapes) must change.
 
-We currently only know the **first** call (`group/all`, body `{"maxResults":"200"}`); the
-device aborts after its 404, so subsequent endpoints are unknown. Approach is necessarily
-incremental:
+**Discovery (2026-06-11):** `models/schedule.py` already mirrors the real protocol — exact
+paths in its docstring (`group`, `group/all`, `group/clear`, `group/{id}`, `task`,
+`task/all`, `task/list`, `task/{id}`, `sort`, `sort/{id}`) and all DTO/VO field names. So
+response shapes don't need guessing; the job is wiring routes at those paths to the DB. It's
+a Google-Tasks-style sync: soft-delete tombstones (`isDeleted`), sort orders, and a
+`nextSyncToken` for incremental sync. The DB models are minimal, so full fidelity will need
+an Alembic migration (add `is_deleted`, `last_modified`, sort fields to the schedule DOs).
 
-1. Implement a best-guess `POST /api/file/schedule/group/all` returning a valid VO
-   (model the envelope on `query/summary/group`'s `{success,totalRecords,totalPages,currentPage,pageSize,…List}`).
-2. Lena triggers a device sync; read the trace for the *next* call the device makes.
-3. Implement that endpoint; repeat until "App Data Sync" completes.
-4. Keep or retire the old `/api/schedule/*` REST API (web-UI only; device never uses it) —
-   decide once the real surface is known.
+Incremental plan (deploy + on-device verify between rounds):
+
+1. **Round 1 (done, no migration):** read path — `POST group/all` → `ScheduleTaskGroupVO`,
+   `POST task/all` → `ScheduleTaskAllVO`. New module `routes/schedule_device.py`, backed by
+   the existing `ScheduleService`. Gets the device past its first calls.
+2. **Round 2:** from the trace, see what the device pushes next; implement the write path
+   (`group`/`task` create/update/delete, `sort`), honoring **device-provided IDs**
+   (`taskListId`/`taskId`), like the summary `uniqueIdentifier`.
+3. **Round 3:** incremental-sync fidelity — `nextSyncToken` filtering + `isDeleted`
+   tombstones; add the Alembic migration. Verify a full round-trip (device ↔ cloud).
+4. Keep or retire the old `/api/schedule/*` REST API (web-UI only; device never uses it).
 
 ## Out of scope
 
