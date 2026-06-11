@@ -1,4 +1,5 @@
 import pytest
+from aiohttp.test_utils import TestClient
 
 from supernote.client.client import Client
 from supernote.client.summary import SummaryClient
@@ -15,6 +16,38 @@ from supernote.models.summary import (
 def summary_client(authenticated_client: Client) -> SummaryClient:
     """Create a SummaryClient."""
     return SummaryClient(authenticated_client)
+
+
+async def test_device_uses_delete_and_put_verbs(
+    client: TestClient,
+    summary_client: SummaryClient,
+    auth_headers: dict[str, str],
+) -> None:
+    """The Manta syncs digests with DELETE /api/file/delete/summary and
+    PUT /api/file/update/summary (captured from device traffic). The routes
+    must accept those verbs, not POST. Issued as raw HTTP to assert the wire
+    contract independently of our own client."""
+    add_response = await summary_client.add_summary(
+        AddSummaryDTO(content="device verb test", data_source="TEST")
+    )
+    summary_id = add_response.id
+    assert summary_id is not None
+
+    update = await client.put(
+        "/api/file/update/summary",
+        json={"id": summary_id, "content": "edited on device"},
+        headers=auth_headers,
+    )
+    assert update.status == 200, await update.text()
+    assert (await update.json())["success"] is True
+
+    delete = await client.delete(
+        "/api/file/delete/summary",
+        json={"id": summary_id},
+        headers=auth_headers,
+    )
+    assert delete.status == 200, await delete.text()
+    assert (await delete.json())["success"] is True
 
 
 async def test_summary_tags_crud(summary_client: SummaryClient) -> None:
