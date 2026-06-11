@@ -33,6 +33,7 @@ from .routes import (
     file_web,
     oss,
     schedule,
+    schedule_device,
     summary,
     system,
 )
@@ -347,6 +348,7 @@ def create_app(config: ServerConfig) -> web.Application:
     app.add_routes(file_device.routes)
     app.add_routes(oss.routes)
     app.add_routes(schedule.routes)
+    app.add_routes(schedule_device.routes)
     app.add_routes(summary.routes)
     app.add_routes(extended.routes)
 
