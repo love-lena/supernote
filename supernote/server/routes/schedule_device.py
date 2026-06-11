@@ -136,6 +136,20 @@ async def create_task(request: web.Request) -> web.Response:
     )
 
 
+@routes.delete("/api/file/schedule/task/{task_id}")
+async def delete_task(request: web.Request) -> web.Response:
+    # Endpoint: DELETE /api/file/schedule/task/{taskId}
+    # The device deletes a single task here (not via the batch endpoint).
+    # Soft-delete (tombstone); idempotent.
+    user = request["user"]
+    task_id = request.match_info["task_id"]
+    schedule_service: ScheduleService = request.app["schedule_service"]
+    user_id = await request.app["user_service"].get_user_id(user)
+
+    await schedule_service.soft_delete_task(user_id, task_id)
+    return web.json_response(BaseResponse(success=True).to_dict())
+
+
 @routes.put("/api/file/schedule/task/list")
 async def update_task_list(request: web.Request) -> web.Response:
     # Request: UpdateScheduleTaskListDTO — the device batches edits, completions

@@ -109,3 +109,16 @@ class ScheduleService:
             await session.commit()
             await session.refresh(task)
             return task
+
+    async def soft_delete_task(self, user_id: int, task_id: str) -> bool:
+        """Tombstone a task by ID. Returns False if not found (idempotent)."""
+        now = _now_ms()
+        async with self.session_manager.session() as session:
+            task = await session.get(ScheduleTaskDO, task_id)
+            if task is None or task.user_id != user_id:
+                return False
+            task.is_deleted = True
+            task.last_modified = now
+            task.update_time = now
+            await session.commit()
+            return True

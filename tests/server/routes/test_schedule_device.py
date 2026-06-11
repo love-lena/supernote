@@ -168,3 +168,24 @@ async def test_task_list_batch_completes_and_deletes(
     by_id = {t["taskId"]: t for t in (await r2.json())["scheduleTask"]}
     assert by_id["a"]["status"] == "completed"  # completed task stays visible
     assert "b" not in by_id  # deleted task tombstoned out
+
+
+async def test_delete_task_removes_from_list(
+    client: TestClient, auth_headers: dict[str, str], user_id: int
+) -> None:
+    """DELETE /task/{taskId} soft-deletes — the device deletes per-task here,
+    not via the batch endpoint."""
+    service: ScheduleService = client.app["schedule_service"]
+    await service.upsert_task(user_id, AddScheduleTaskDTO(task_id="del-me", title="X"))
+
+    resp = await client.delete("/api/file/schedule/task/del-me", headers=auth_headers)
+    assert resp.status == 200, await resp.text()
+    assert (await resp.json())["success"] is True
+
+    r2 = await client.post(
+        "/api/file/schedule/task/all",
+        json={"maxResults": "200"},
+        headers=auth_headers,
+    )
+    by_id = {t["taskId"]: t for t in (await r2.json())["scheduleTask"]}
+    assert "del-me" not in by_id
