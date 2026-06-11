@@ -59,6 +59,26 @@ conflicts. The tarball from step 3 is the rollback path, not the old container.
 `config.yaml` (with `secret_key`) travels inside the data dir, so existing device
 and CLI tokens stay valid — no forced re-auth beyond the URL change below.
 
+## Changing the published port
+
+If `8080`/`9000` are already taken on the new host, remap only the **published
+(host) side** and leave the container-internal port alone:
+
+```yaml
+# supernote service — host 7832 -> container 8080
+ports:
+  - "${BIND_ADDR:-0.0.0.0}:7832:8080"
+# leave SUPERNOTE_PORT: 8080, and manta-mcp's SUPERNOTE_CLOUD_URL: http://supernote:8080
+```
+
+Changing *every* `8080` (the internal `SUPERNOTE_PORT` and the MCP's
+`SUPERNOTE_CLOUD_URL`) also works, but only if you recreate **both** containers:
+a `manta-mcp` started against the old URL keeps it until recreated, so it silently
+dials a port nothing listens on and every tool call times out (the cloud itself is
+fine — the CLI/device hit the published port and work). Fix:
+`docker compose up -d --force-recreate manta-mcp`. The device and CLI always use
+the published host port regardless.
+
 ## Fedora / RHEL (SELinux)
 
 - **Bind mount:** the compose file mounts the data dir with `:Z`, which relabels it
