@@ -118,6 +118,101 @@ class VirtualFileSystem:
         await self.db.refresh(new_file)
         return new_file
 
+    async def replace_file_version(
+        self,
+        user_id: int,
+        parent_id: int,
+        name: str,
+        size: int,
+        md5: str,
+        storage_key: str,
+        keep_versions: int = 10,
+    ) -> tuple[UserFileDO, list[str], bool]:
+        """Upload a new version of the file at (parent_id, name) WITHOUT creating
+        a duplicate at the same path.
+
+        The device spawns ``_CONFLICT_`` copies when it sees more than one active
+        file at a path, so we keep exactly one active version: any current active
+        version(s) are superseded (marked ``is_active="N"`` — kept as recoverable
+        history, NOT moved to the recycle bin) and the new upload becomes active.
+
+        We can't prove an upload is "newer" (the device protocol carries no
+        version/mtime, and .note files have no monotonic counter), so this is a
+        non-destructive last-write-wins: it's safe because notebooks are
+        single-writer (the device, syncing forward), and even a wrong guess only
+        hides the prior version rather than destroying it.
+
+        Then prune: keep the newest ``keep_versions`` total (1 active +
+        keep_versions-1 inactive); older inactive rows are deleted and their
+        storage keys returned so the caller can drop the blobs.
+
+        Returns ``(active_file, blob_keys_to_delete, changed)``. ``changed`` is
+        False when the active version already had this md5 (an identical re-sync),
+        in which case nothing is touched.
+        """
+        keep_versions = max(1, keep_versions)
+        now_ms = int(time.time() * 1000)
+
+        actives = (
+            await self.db.execute(
+                select(UserFileDO).where(
+                    UserFileDO.user_id == user_id,
+                    UserFileDO.directory_id == parent_id,
+                    UserFileDO.file_name == name,
+                    UserFileDO.is_folder == "N",
+                    UserFileDO.is_active == "Y",
+                )
+            )
+        ).scalars().all()
+
+        # Identical re-sync of an already-single active version → no-op.
+        if len(actives) == 1 and actives[0].md5 == md5:
+            return actives[0], [], False
+
+        # Supersede every current active version (history, not recycle bin).
+        for old in actives:
+            old.is_active = "N"
+
+        new_file = UserFileDO(
+            user_id=user_id,
+            directory_id=parent_id,
+            file_name=name,
+            is_folder="N",
+            size=size,
+            md5=md5,
+            storage_key=storage_key,
+            create_time=now_ms,
+            update_time=now_ms,
+            is_active="Y",
+        )
+        self.db.add(new_file)
+        await self.db.flush()
+
+        # Prune inactive versions beyond the retention window (newest kept).
+        inactive = (
+            await self.db.execute(
+                select(UserFileDO)
+                .where(
+                    UserFileDO.user_id == user_id,
+                    UserFileDO.directory_id == parent_id,
+                    UserFileDO.file_name == name,
+                    UserFileDO.is_folder == "N",
+                    UserFileDO.is_active == "N",
+                )
+                .order_by(UserFileDO.update_time.desc(), UserFileDO.id.desc())
+            )
+        ).scalars().all()
+
+        blobs_to_delete: list[str] = []
+        for old in inactive[keep_versions - 1 :]:
+            if old.storage_key:
+                blobs_to_delete.append(old.storage_key)
+            await self.db.delete(old)
+
+        await self.db.commit()
+        await self.db.refresh(new_file)
+        return new_file, blobs_to_delete, True
+
     async def get_node_by_id(self, user_id: int, node_id: int) -> Optional[UserFileDO]:
         stmt = select(UserFileDO).where(
             UserFileDO.user_id == user_id,

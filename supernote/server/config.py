@@ -97,6 +97,15 @@ class ServerConfig(DataClassYAMLMixin):
     Env Var: `SUPERNOTE_STORAGE_DIR`
     """
 
+    retention_versions: int = 10
+    """How many versions of a file to retain. A device upload to an existing
+    path supersedes the prior version (kept inactive, not deleted) rather than
+    creating a duplicate; older inactive versions beyond this count are pruned
+    (row + blob). Must be >= 1 (1 = keep only the current version, no history).
+
+    Env Var: `SUPERNOTE_RETENTION_VERSIONS`
+    """
+
     proxy_mode: str | None = None
     """Proxy header handling mode: None/'disabled' (ignore proxy headers), 'relaxed' (trust immediate upstream), or 'strict' (require specific trusted IPs). Defaults to None for security.
 
@@ -231,6 +240,15 @@ BaseConfig
         if os.getenv("SUPERNOTE_STORAGE_DIR"):
             config.storage_dir = os.getenv("SUPERNOTE_STORAGE_DIR", config.storage_dir)
             logger.info(f"Using SUPERNOTE_STORAGE_DIR: {config.storage_dir}")
+
+        if rv := os.getenv("SUPERNOTE_RETENTION_VERSIONS"):
+            try:
+                config.retention_versions = max(1, int(rv))
+                logger.info(
+                    f"Using SUPERNOTE_RETENTION_VERSIONS: {config.retention_versions}"
+                )
+            except ValueError:
+                logger.warning(f"Invalid SUPERNOTE_RETENTION_VERSIONS: {rv!r}")
 
         if os.getenv("SUPERNOTE_BASE_URL"):
             config._base_url = os.getenv("SUPERNOTE_BASE_URL")

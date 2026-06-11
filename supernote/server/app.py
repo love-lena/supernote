@@ -296,6 +296,7 @@ def create_app(config: ServerConfig) -> web.Application:
         user_service,
         session_manager,
         event_bus,
+        retention_versions=config.retention_versions,
     )
     app["user_service"] = user_service
     app["file_service"] = file_service

@@ -165,6 +165,7 @@ class FileService:
         user_service: UserService,
         session_manager: DatabaseSessionManager,
         event_bus: LocalEventBus | None = None,
+        retention_versions: int = 10,
     ) -> None:
         """Initialize the file service."""
         self.storage_root = storage_root
@@ -173,6 +174,7 @@ class FileService:
         self.user_service = user_service
         self.session_manager = session_manager
         self.event_bus = event_bus
+        self.retention_versions = max(1, retention_versions)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
     async def list_folder(
@@ -377,21 +379,39 @@ class FileService:
             if clean_path:
                 parent_id = await vfs.ensure_directory_path(user_id, clean_path)
 
-            new_file = await vfs.create_file(
+            # Upsert by path: supersede any current version (kept inactive as
+            # recoverable history) instead of inserting a duplicate, which is
+            # what makes the device spawn _CONFLICT_ copies. Prune old versions
+            # beyond the retention window and collect their blobs to delete.
+            new_file, blobs_to_delete, changed = await vfs.replace_file_version(
                 user_id=user_id,
                 parent_id=parent_id,
                 name=filename,
                 size=blob_size,
                 md5=content_hash,
                 storage_key=inner_name,
+                keep_versions=self.retention_versions,
             )
+
+        # On an identical re-sync the freshly-uploaded blob is redundant (the
+        # existing active version already holds this content) — drop it too.
+        if not changed and inner_name and inner_name != new_file.storage_key:
+            blobs_to_delete = [*blobs_to_delete, inner_name]
+
+        # Drop pruned-version blobs (best-effort; never fail the upload on this).
+        for key in blobs_to_delete:
+            try:
+                await self.blob_storage.delete(USER_DATA_BUCKET, key)
+            except Exception:
+                logger.warning("retention: failed to delete pruned blob %s", key)
 
         # 4. Construct response
         clean_path = path_str.strip("/")
         full_path = f"{clean_path}/{filename}" if clean_path else filename
 
-        # 5. Emit Event (Fire and Forget)
-        if self.event_bus:
+        # 5. Emit Event (Fire and Forget). Skip on an identical re-sync (no change)
+        # to avoid spurious resync churn.
+        if self.event_bus and changed:
             if filename.endswith(".note"):
                 await self.event_bus.publish(
                     NoteUpdatedEvent(
@@ -438,21 +458,32 @@ class FileService:
 
         blob_size = metadata.size
 
-        # 2. Create VFS Node
+        # 2. Upsert VFS Node (supersede prior version, prune old ones) — same as
+        # the device path, so an API re-upload to a path replaces in place rather
+        # than stacking duplicates (which the device renders as _CONFLICT_).
         async with self.session_manager.session() as session:
             vfs = VirtualFileSystem(session)
 
-            new_file = await vfs.create_file(
+            new_file, blobs_to_delete, changed = await vfs.replace_file_version(
                 user_id=user_id,
                 parent_id=directory_id,
                 name=file_name,
                 size=blob_size,
                 md5=md5,
                 storage_key=inner_name,
+                keep_versions=self.retention_versions,
             )
 
-        # 3. Emit Event (Fire and Forget)
-        if self.event_bus:
+        if not changed and inner_name and inner_name != new_file.storage_key:
+            blobs_to_delete = [*blobs_to_delete, inner_name]
+        for key in blobs_to_delete:
+            try:
+                await self.blob_storage.delete(USER_DATA_BUCKET, key)
+            except Exception:
+                logger.warning("retention: failed to delete pruned blob %s", key)
+
+        # 3. Emit Event (Fire and Forget). Skip on an identical re-sync.
+        if self.event_bus and changed:
             full_path = await self.get_full_path_by_node(user_id, new_file.id)
             if file_name.endswith(".note"):
                 await self.event_bus.publish(
