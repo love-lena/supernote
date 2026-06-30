@@ -102,28 +102,42 @@ Endpoints are config fields: `curated_url` (default AF) and `graphql_url`
 
 Strict-typed (the new module is *not* under the mypy-excluded `notebook/`/`cli/`).
 
-## Deployment (pikachu)
+## Deployment (pikachu) — deployed + verified 2026-06-29
 
-A new compose service alongside `supernote` + `manta-mcp`:
+A dedicated image (`Dockerfile.lesswrong`, adds `pandoc`) + a compose service
+alongside `supernote` + `manta-mcp`:
 
 ```yaml
   lesswrong-inbox:
-    image: supernote:socketio-dev        # reuse the cloud image (has pandoc? see note)
+    image: supernote:lesswrong
+    build: { context: ., dockerfile: Dockerfile.lesswrong }
     depends_on: [supernote]
     restart: unless-stopped
-    command: ["python", "-m", "supernote.integrations.lesswrong",
-              "--loop", "--interval", "6h", "--state", "/data/lesswrong-seen.json"]
+    # CMD in the image: --loop --interval 6h --state /data/lesswrong-seen.json
     environment:
-      SUPERNOTE_CLOUD_URL: http://supernote:8080
+      SUPERNOTE_CLOUD_URL: http://supernote:8080   # pikachu remaps this to :7832
       SUPERNOTE_EMAIL: ${SUPERNOTE_EMAIL:?}
       SUPERNOTE_PASSWORD: ${SUPERNOTE_PASSWORD:?}
     volumes:
-      - ${SUPERNOTE_DATA_DIR:-./supernote-data}:/data:Z
+      - lesswrong-state:/data        # dedicated; see SELinux note
+volumes:
+  lesswrong-state:
 ```
 
-State (`/data/lesswrong-seen.json`) lives in the bind-mounted data dir, so it is
-covered by the existing backup. **Open item:** the cloud image must contain
-`pandoc` (add to the Dockerfile if absent) — verify before deploying.
+**SELinux `:Z` gotcha (learned the hard way on pikachu, an Enforcing host):** do
+*not* mount the cloud's `${SUPERNOTE_DATA_DIR}:/data:Z` into this service. `:Z`
+relabels the bind to a *private* MCS category for this container, which
+relabels the cloud's live SQLite DB out from under the running `supernote`
+container (different category) — reads survive on its open fd but **all writes
+fail with "database is locked"**, blocking device sync. Use a dedicated named
+volume instead. If it ever happens: `docker compose up -d --force-recreate
+supernote` re-labels `/data` back to the cloud container.
+
+**Port remap:** pikachu runs the cloud on `:7832` (not 8080), so the deployed
+service sets `SUPERNOTE_CLOUD_URL: http://supernote:7832`.
+
+First-run seed used `--backfill 3` → 17 EPUBs into `/INBOX/LessWrong` (verified
+via the manta-cloud MCP); the loop then runs steady-state (0 re-pushed).
 
 ## Out of scope (v1)
 

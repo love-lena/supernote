@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import html as _html
 import json
 import logging
@@ -273,7 +274,11 @@ _RESERVED = set('<>:"|?*')
 
 def slugify(title: str) -> str:
     """A filesystem-safe, human-readable rendering of a post title."""
-    s = title.replace("/", " ").replace("\\", " ")
+    # Normalize all whitespace (incl. NBSP \xa0 / other Unicode spaces, which are
+    # not `isprintable`) to a plain space FIRST, so it survives the filter below
+    # as a space rather than being dropped (which would join adjacent words).
+    s = re.sub(r"\s+", " ", title)
+    s = s.replace("/", " ").replace("\\", " ")
     s = "".join(c for c in s if c not in _RESERVED and c.isprintable())
     s = re.sub(r"\s+", " ", s).strip(" .")
     s = s[:100].strip(" .")
@@ -509,8 +514,15 @@ async def _run(args: argparse.Namespace) -> None:
     host = os.environ.get("SUPERNOTE_CLOUD_URL", "http://localhost:8080")
     interval = parse_duration(args.interval) if args.loop else 0
 
-    async with aiohttp.ClientSession() as session:
-        sn = await _make_cloud_session(host) if not args.dry_run else None
+    # AsyncExitStack closes both the aiohttp session and the cloud session
+    # cleanly on exit (avoids "Unclosed client session" warnings on one-shot runs).
+    async with contextlib.AsyncExitStack() as stack:
+        session = await stack.enter_async_context(aiohttp.ClientSession())
+        sn = (
+            await stack.enter_async_context(await _make_cloud_session(host))
+            if not args.dry_run
+            else None
+        )
         while True:
             try:
                 await run_once(

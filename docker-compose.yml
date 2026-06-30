@@ -70,5 +70,12 @@ services:
       SUPERNOTE_EMAIL: ${SUPERNOTE_EMAIL:?set SUPERNOTE_EMAIL in .env}
       SUPERNOTE_PASSWORD: ${SUPERNOTE_PASSWORD:?set SUPERNOTE_PASSWORD in .env}
     volumes:
-      # Shares the cloud's data dir so the seen-ids state is covered by backups.
-      - ${SUPERNOTE_DATA_DIR:-./supernote-data}:/data:Z
+      # Dedicated volume for the seen-ids state. Do NOT mount the cloud's data
+      # dir here: with SELinux + `:Z` that relabels the live DB to this
+      # container's private MCS category and locks the cloud out of its own
+      # files (writes fail with "database is locked"). Verified on an Enforcing
+      # host 2026-06-29.
+      - lesswrong-state:/data
+
+volumes:
+  lesswrong-state:

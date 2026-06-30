@@ -268,6 +268,14 @@ def test_slugify_falls_back_for_empty() -> None:
     assert slugify("///") == "untitled"
 
 
+def test_slugify_converts_nonbreaking_space_to_space() -> None:
+    """Regression: a NBSP (\\xa0) in a title must become a normal space, not be
+    dropped (which produced filenames like 'Misalignmentin an RL-Only Setting')."""
+    assert slugify("Misalignment\xa0in an RL-Only Setting") == (
+        "Misalignment in an RL-Only Setting"
+    )
+
+
 def test_epub_filename_prepends_iso_date() -> None:
     post = _p("abc", 9, "2026-06-28T13:20:54.692Z", "curated")
     post.title = "Hello World"
