@@ -1,9 +1,12 @@
 """Tests for the LessWrong -> Manta inbox integration."""
 
 import json
+import os
 import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from supernote.integrations.lesswrong import (
     AuthorSource,
@@ -15,6 +18,7 @@ from supernote.integrations.lesswrong import (
     default_config,
     discover,
     epub_filename,
+    graphql,
     load_seen,
     parse_duration,
     parse_post_detail,
@@ -70,7 +74,8 @@ def test_config_load_falls_back_to_default_when_file_absent(tmp_path: Path) -> N
 def test_config_load_reads_file(tmp_path: Path) -> None:
     custom = LessWrongConfig(curated=False, authors=[AuthorSource("Zvi", "z1")])
     f = tmp_path / "lw.yaml"
-    f.write_text(custom.to_yaml())
+    yaml_text = custom.to_yaml()  # mashumaro types this as str | bytes
+    f.write_text(yaml_text if isinstance(yaml_text, str) else yaml_text.decode())
     assert LessWrongConfig.load(f) == custom
 
 
@@ -276,10 +281,20 @@ def test_slugify_converts_nonbreaking_space_to_space() -> None:
     )
 
 
-def test_epub_filename_prepends_iso_date() -> None:
+def test_epub_filename_prepends_iso_date_and_appends_id() -> None:
     post = _p("abc", 9, "2026-06-28T13:20:54.692Z", "curated")
     post.title = "Hello World"
-    assert epub_filename(post) == "2026-06-28 Hello World.epub"
+    assert epub_filename(post) == "2026-06-28 Hello World [abc].epub"
+
+
+def test_epub_filename_disambiguates_same_title_and_date_by_id() -> None:
+    """Two posts with the same date+title must not collide to one cloud path."""
+    a = _p("id1", 9, "2026-06-28T00:00:00Z", "curated")
+    b = _p("id2", 9, "2026-06-28T00:00:00Z", "curated")
+    a.title = b.title = "Identical Title"
+    assert epub_filename(a) != epub_filename(b)
+    assert epub_filename(a).endswith("[id1].epub")
+    assert epub_filename(b).endswith("[id2].epub")
 
 
 def test_build_html_document_includes_title_byline_and_source() -> None:
@@ -367,7 +382,9 @@ async def test_push_epub_creates_folder_then_uploads() -> None:
     await push_epub(sn, "/INBOX/LessWrong", "2026-06-28 Hello.epub", b"epubbytes")
     sn.device.create_folder.assert_awaited_once()
     sn.device.upload_content.assert_awaited_once()
-    args, kwargs = sn.device.upload_content.await_args
+    call = sn.device.upload_content.await_args
+    assert call is not None
+    args, kwargs = call
     # uploaded to the full path, as a non-device ("WEB") upload so it triggers sync
     assert "/INBOX/LessWrong/2026-06-28 Hello.epub" in (
         list(args) + list(kwargs.values())
@@ -508,3 +525,102 @@ async def test_run_once_failed_render_is_not_marked_seen(tmp_path: Path) -> None
         )
     sn.device.upload_content.assert_not_awaited()
     assert load_seen(state) == set()  # not suppressed -> retried next run
+
+
+class _FakeResp:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    async def json(self) -> dict:
+        return self._payload
+
+    async def __aenter__(self) -> "_FakeResp":
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+class _FakeSession:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def post(self, url: str, json: dict) -> "_FakeResp":
+        return _FakeResp(self._payload)
+
+
+async def test_graphql_raises_on_graphql_level_errors() -> None:
+    """A 200 response carrying a GraphQL `errors` array must raise, not return
+    a null result that downstream turns into an empty EPUB."""
+    session = _FakeSession({"errors": [{"message": "boom"}], "data": None})
+    with pytest.raises(Exception):
+        await graphql(session, "http://x/graphql", "query { posts { _id } }")
+
+
+async def test_run_once_skips_post_with_empty_html_body(tmp_path: Path) -> None:
+    """An empty htmlBody must not be pushed as a near-empty EPUB nor marked seen."""
+    cfg = LessWrongConfig(curated=True, authors=[], tags=[])
+
+    async def _g(session: object, url: str, query: str) -> dict:
+        if "post(input" in query:
+            return {
+                "data": {
+                    "post": {"result": {"title": "Hi", "htmlBody": "", "pageUrl": "u"}}
+                }
+            }
+        return {
+            "data": {
+                "posts": {
+                    "results": [
+                        {
+                            "_id": "abc",
+                            "title": "Hi",
+                            "postedAt": "2026-06-28T00:00:00Z",
+                            "baseScore": 5,
+                            "user": {"displayName": "Buck"},
+                        }
+                    ]
+                }
+            }
+        }
+
+    sn = _push_sn()
+    state = tmp_path / "seen.json"
+    with patch("supernote.integrations.lesswrong.graphql", AsyncMock(side_effect=_g)):
+        await run_once(
+            cfg, state, session=object(), sn=sn, first_run=False, workdir=tmp_path
+        )
+    sn.device.upload_content.assert_not_awaited()
+    assert load_seen(state) == set()  # empty-body post not marked seen -> retried
+
+
+async def test_make_cloud_session_retries_login_on_transient_error() -> None:
+    """A transient login failure (cloud DB lock) is retried, not fatal — so a
+    single locked moment doesn't drop a whole poll cycle."""
+    from supernote.integrations.lesswrong import _make_cloud_session
+
+    sentinel = object()
+    login = AsyncMock(
+        side_effect=[
+            RuntimeError("database is locked"),
+            RuntimeError("database is locked"),
+            sentinel,
+        ]
+    )
+    fake_supernote = MagicMock()
+    fake_supernote.login = login
+    with (
+        patch.dict(
+            os.environ,
+            {"SUPERNOTE_EMAIL": "e@x", "SUPERNOTE_PASSWORD": "p"},
+            clear=True,
+        ),
+        patch("supernote.client.Supernote", fake_supernote),
+        patch("supernote.integrations.lesswrong.asyncio.sleep", AsyncMock()),
+    ):
+        result = await _make_cloud_session("http://x")
+    assert result is sentinel
+    assert login.await_count == 3

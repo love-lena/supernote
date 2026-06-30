@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import html as _html
 import json
 import logging
@@ -286,8 +285,10 @@ def slugify(title: str) -> str:
 
 
 def epub_filename(post: PostRef) -> str:
-    """`YYYY-MM-DD Title.epub` — chronological + readable in the inbox folder."""
-    return f"{post.posted_at[:10]} {slugify(post.title)}.epub"
+    """`YYYY-MM-DD Title [id].epub` — chronological + readable, with the post id
+    as a stable suffix so two posts sharing a date+title (or the same truncated
+    slug) never collide on one cloud path (the VFS replaces by path)."""
+    return f"{post.posted_at[:10]} {slugify(post.title)} [{post.id}].epub"
 
 
 def build_html_document(post: PostRef, html_body: str, page_url: str) -> str:
@@ -368,10 +369,18 @@ def save_seen(path: str | Path, ids: set[str]) -> None:
 
 
 async def graphql(session: Any, url: str, query: str) -> dict[str, Any]:
-    """POST a GraphQL query and return the parsed JSON response."""
+    """POST a GraphQL query and return the parsed JSON response.
+
+    Raises on a GraphQL-level ``errors`` array — a 200 response can still carry
+    errors with a null ``data``, and we must not let that silently become empty
+    data that downstream turns into a near-empty EPUB.
+    """
     async with session.post(url, json={"query": query}) as resp:
         resp.raise_for_status()
-        return await resp.json()  # type: ignore[no-any-return]
+        data: dict[str, Any] = await resp.json()
+    if data.get("errors"):
+        raise RuntimeError(f"GraphQL errors from {url}: {data['errors']}")
+    return data
 
 
 async def discover(session: Any, config: LessWrongConfig) -> list[DiscoveredSource]:
@@ -447,6 +456,10 @@ async def run_once(
     for post in plan.to_push:
         try:
             detail = await fetch_detail(session, config, post.id)
+            if not detail.html_body.strip():
+                # A missing/empty body would render an almost-empty EPUB; treat
+                # it as a failure so the post is retried instead of marked seen.
+                raise ValueError(f"empty htmlBody for post {post.id} ({post.title})")
             document = build_html_document(
                 post, detail.html_body, detail.page_url or post_url(post)
             )
@@ -484,8 +497,16 @@ def parse_duration(text: str) -> int:
     return int(text)
 
 
+_LOGIN_ATTEMPTS = 3
+
+
 async def _make_cloud_session(host: str) -> Any:
-    """Authenticate to the cloud the same way manta-mcp does (env-driven)."""
+    """Authenticate to the cloud the same way manta-mcp does (env-driven).
+
+    Retries the login a few times: the login challenge is a server-side DB write
+    and the cloud's SQLite can transiently report "database is locked" under
+    concurrent sync load, which would otherwise drop a whole poll cycle.
+    """
     from supernote.client import Supernote
 
     if token := os.environ.get("SUPERNOTE_TOKEN"):
@@ -496,7 +517,18 @@ async def _make_cloud_session(host: str) -> Any:
         raise RuntimeError(
             "No credentials: set SUPERNOTE_TOKEN, or SUPERNOTE_EMAIL + SUPERNOTE_PASSWORD."
         )
-    return await Supernote.login(email, password, host=host)
+    last_exc: Exception | None = None
+    for attempt in range(1, _LOGIN_ATTEMPTS + 1):
+        try:
+            return await Supernote.login(email, password, host=host)
+        except Exception as e:
+            last_exc = e
+            logger.warning(
+                "login attempt %d/%d failed: %s", attempt, _LOGIN_ATTEMPTS, e
+            )
+            if attempt < _LOGIN_ATTEMPTS:
+                await asyncio.sleep(2 * attempt)
+    raise RuntimeError(f"login failed after {_LOGIN_ATTEMPTS} attempts") from last_exc
 
 
 async def _run(args: argparse.Namespace) -> None:
@@ -514,25 +546,31 @@ async def _run(args: argparse.Namespace) -> None:
     host = os.environ.get("SUPERNOTE_CLOUD_URL", "http://localhost:8080")
     interval = parse_duration(args.interval) if args.loop else 0
 
-    # AsyncExitStack closes both the aiohttp session and the cloud session
-    # cleanly on exit (avoids "Unclosed client session" warnings on one-shot runs).
-    async with contextlib.AsyncExitStack() as stack:
-        session = await stack.enter_async_context(aiohttp.ClientSession())
-        sn = (
-            await stack.enter_async_context(await _make_cloud_session(host))
-            if not args.dry_run
-            else None
-        )
+    async with aiohttp.ClientSession() as session:
         while True:
             try:
-                await run_once(
-                    config,
-                    args.state,
-                    session=session,
-                    sn=sn,
-                    dry_run=args.dry_run,
-                    first_run=None,
-                )
+                if args.dry_run:
+                    await run_once(
+                        config,
+                        args.state,
+                        session=session,
+                        sn=None,
+                        dry_run=True,
+                        first_run=None,
+                    )
+                else:
+                    # Authenticate fresh each run: a long-running loop must never
+                    # operate on an expired token (server web tokens default to
+                    # ~24h). The `async with` also closes the session each cycle.
+                    async with await _make_cloud_session(host) as sn:
+                        await run_once(
+                            config,
+                            args.state,
+                            session=session,
+                            sn=sn,
+                            dry_run=False,
+                            first_run=None,
+                        )
             except Exception:
                 logger.exception("LessWrong inbox run failed")
             if not args.loop:
