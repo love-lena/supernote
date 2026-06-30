@@ -57,7 +57,14 @@ manta-mcp = [
   "fastmcp>=3,<4",
   "pypdf>=4",
 ]
-all = ["supernote[client,server]"]
+lesswrong = [
+  # LessWrong -> Manta reading inbox. Needs the cloud client + YAML config.
+  # External: requires the `pandoc` binary on PATH (see Dockerfile.lesswrong).
+  "supernote[client]",
+  "mashumaro>=3.17",
+  "pyyaml>=6.0",
+]
+all = ["supernote[client,server,lesswrong]"]
 
 [project.urls]
 Source = "https://github.com/allenporter/supernote"
@@ -69,12 +76,14 @@ include = ["supernote*"]
 supernote = "supernote.cli.main:main"
 supernote-server = "supernote.cli.server:main"
 manta-mcp = "supernote.manta_mcp.server:main"
+supernote-lesswrong = "supernote.integrations.lesswrong:main"
 
 [tool.setuptools.package-data]
 "supernote" = ["alembic.ini"]
 "supernote.alembic" = ["env.py", "script.py.mako", "versions/*.py"]
 "supernote.server" = ["static/**/*"]
 "supernote.server.resources.prompts" = ["**/*.md"]
+"supernote.integrations" = ["assets/*"]
 
 [tool.mypy]
 exclude = [

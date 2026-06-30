@@ -52,3 +52,23 @@ services:
       SUPERNOTE_EMAIL: ${SUPERNOTE_EMAIL:?set SUPERNOTE_EMAIL in .env}
       SUPERNOTE_PASSWORD: ${SUPERNOTE_PASSWORD:?set SUPERNOTE_PASSWORD in .env}
       MANTA_MCP_BEARER: ${MANTA_MCP_BEARER:-}
+
+  # LessWrong/AlignmentForum reading inbox: pulls selected posts every 6h, renders
+  # each as a reflowable EPUB, and pushes it to /INBOX/LessWrong (auto-syncs to the
+  # device). Sources are the shipped default (curated from AF; authors + tags from
+  # LW) — mount a YAML and add `--config /path` to the command to override.
+  lesswrong-inbox:
+    image: supernote:lesswrong
+    build:
+      context: .
+      dockerfile: Dockerfile.lesswrong
+    restart: unless-stopped
+    depends_on:
+      - supernote
+    environment:
+      SUPERNOTE_CLOUD_URL: http://supernote:8080
+      SUPERNOTE_EMAIL: ${SUPERNOTE_EMAIL:?set SUPERNOTE_EMAIL in .env}
+      SUPERNOTE_PASSWORD: ${SUPERNOTE_PASSWORD:?set SUPERNOTE_PASSWORD in .env}
+    volumes:
+      # Shares the cloud's data dir so the seen-ids state is covered by backups.
+      - ${SUPERNOTE_DATA_DIR:-./supernote-data}:/data:Z
