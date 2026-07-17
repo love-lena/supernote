@@ -1,0 +1,30 @@
+FROM python:3.14-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Non-root user.
+RUN groupadd -g 1000 -r lesswrong && useradd -u 1000 -r -g lesswrong lesswrong
+
+# pandoc renders each post to a reflowable EPUB. --no-install-recommends keeps
+# texlive and friends out (we only do html -> epub, no PDF/LaTeX).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends pandoc && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY pyproject.toml README.md LICENSE constraints.txt ./
+COPY supernote/ supernote/
+
+# constraints.txt mirrors the cloud image (shared tested pins; harmless here).
+RUN pip install --no-cache-dir -c constraints.txt ".[lesswrong]"
+
+# State (seen-ids JSON) lives on the bind-mounted data dir so it is backed up.
+RUN mkdir -p /data && chown -R lesswrong:lesswrong /data
+USER lesswrong
+VOLUME ["/data"]
+
+# Poll every 6h; curated from AlignmentForum, authors + tags from LessWrong
+# (the shipped default preset). Override sources by mounting a --config YAML.
+CMD ["supernote-lesswrong", "--loop", "--interval", "6h", "--state", "/data/lesswrong-seen.json"]

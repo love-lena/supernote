@@ -1,0 +1,66 @@
+@namespace epub "http://www.idpf.org/2007/ops";
+
+/* Editorial reading style for EPUB on the Supernote Manta. The device owns base
+   font SIZE, row spacing, and page margins (its Display Settings); this owns
+   typography + structure. Verified on-device:
+     - font-family, font-size, text-align, color, and borders ARE honored;
+     - font-WEIGHT is NOT (the serif has no bold face) — so emphasis is carried
+       by a font-family switch: bold runs render in the sans face.
+   Left-aligned (justify rivers badly at large e-ink sizes). */
+
+/* Page margin. Without this, the device falls back to its own (wide) default
+   page margin under "Document default setting" — which reads as a narrow column
+   of text floating in whitespace. Pandoc's stock EPUB stylesheet sets
+   @page { margin: 10px }; matching it gives the normal full-width reading
+   layout. Margins/line-spacing for reading comfort are still dialed on the
+   device (User-defined), but the baseline is now normal, not wide. */
+@page { margin: 10px; }
+body { font-family: Georgia, "Times New Roman", serif; text-align: left; margin: 0; padding: 0; }
+p { margin: 0 0 0.7em; text-indent: 0; }
+
+h1, h2, h3, h4 {
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-weight: 700; line-height: 1.2; text-align: left;
+}
+h1 { font-size: 1.6em; margin: 0.2em 0 0.5em; border-bottom: 2px solid #000; padding-bottom: 0.1em; }
+h2 { font-size: 1.28em; margin: 1.3em 0 0.3em; border-bottom: 1px solid #888; padding-bottom: 0.08em; }
+h3 { font-size: 1.1em; margin: 1.1em 0 0.25em; }
+h4 { font-size: 1em; margin: 1em 0 0.2em; }
+
+blockquote { font-style: italic; border-left: 3px solid #999; margin: 0.8em 0 0.8em 0.4em; padding-left: 0.8em; }
+ul, ol { margin: 0 0 0.7em 1.2em; padding: 0; }
+li { margin: 0.2em 0; }
+
+a { color: #000; text-decoration: underline; }
+
+/* Footnotes. Pandoc emits the reference as a plain full-size link (no <sup>),
+   which renders as a baseline, underlined digit in the serif body — reads as a
+   stray number. Style the marker as a small raised superscript with no rule so
+   it looks like a real footnote. font-size + color are honored on-device;
+   vertical-align/text-decoration are best-effort — even if a marker drops to
+   the baseline it stays small and unobtrusive. The end-of-doc notes block is
+   set off with a quiet rule and smaller type. */
+.footnote-ref { font-size: 0.72em; vertical-align: super; line-height: 0; text-decoration: none; }
+.footnotes { font-size: 0.9em; margin-top: 1.4em; }
+.footnote-item { margin: 0.5em 0; }
+/* The leading "N." number is a back-link; keep it visible, unruled. */
+.footnotes a.footnote-back { text-decoration: none; }
+/* Emphasis via face-switch, since the device drops font-weight (see header note). */
+strong, b { font-family: "Helvetica Neue", Arial, sans-serif; font-weight: 700; }
+em, i { font-style: italic; }
+strong em, strong i, em strong, b i { font-family: "Helvetica Neue", Arial, sans-serif; font-style: italic; }
+
+code { font-family: "Courier New", monospace; font-size: 0.95em; }
+pre {
+  font-family: "Courier New", monospace; font-size: 0.85em;
+  border: 1px solid #ccc; padding: 0.6em;
+  white-space: pre-wrap; overflow-wrap: break-word;
+}
+
+table { border-collapse: collapse; width: 100%; font-size: 0.95em; margin: 0.8em 0; }
+th, td { border: 1px solid #999; padding: 0.3em 0.5em; text-align: left; vertical-align: top; }
+th { font-family: "Helvetica Neue", Arial, sans-serif; }
+
+img { max-width: 100%; height: auto; }
+figcaption { font-size: 0.85em; font-style: italic; text-align: center; color: #555; }
+hr { border: none; border-top: 1px solid #999; margin: 1.2em 0; }

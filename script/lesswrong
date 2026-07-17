@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# script/lesswrong: Pull selected LessWrong posts into the Manta /INBOX as EPUBs.
+#
+# Sources (curated + authors + tags) are config-driven — see
+# docs/superpowers/specs/2026-06-29-lesswrong-inbox-design.md and pass --config
+# to override the shipped default preset.
+#
+# Cloud auth + URL come from the environment (same as manta-mcp):
+#   SUPERNOTE_CLOUD_URL   cloud base URL (default http://localhost:8080)
+#   SUPERNOTE_TOKEN       access token; OR
+#   SUPERNOTE_EMAIL/_PASSWORD  account creds
+#
+# Examples:
+#   script/lesswrong --dry-run -v            # discover + render, no push
+#   script/lesswrong                          # one pass, push new posts
+#   script/lesswrong --loop --interval 6h     # poll forever
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if command -v uv >/dev/null 2>&1; then
+  exec uv run python -m supernote.integrations.lesswrong "$@"
+else
+  exec python3 -m supernote.integrations.lesswrong "$@"
+fi
